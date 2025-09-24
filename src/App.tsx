@@ -1,220 +1,264 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import * as XLSX from 'xlsx'
+// src/App.tsx
+import { useEffect, useMemo, useState } from "react";
+import type { Leaderboards, Student, Clazz, Book } from "./api";
+import { fetchLeaderboards, refreshLeaderboards } from "./api";
 
-// ✅ 已填入你的 /exec URL（可自行更改為其他 GAS 部署網址）
-const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbyalzLLEozy9HJDQHXo45nurA_SRIwn7T6I48O65iQPWcHaYWBAeki2HmT0nkl9OyHB5Q/exec'
+type TabKey = "student" | "class" | "book";
 
-type StudentRow = { grade: string; clazz: string; name: string; count: number }
-type ClassRow   = { grade: string; clazz: string; count: number }
-type BookRow    = { title: string; count: number }
+const pastel = {
+  bg: "bg-[#FFF7F9]",          // very light pink
+  card: "bg-white/90 backdrop-blur",
+  border: "border-[#EFD9E0]",
+  primary: "bg-[#FFC6D9]",     // macaron pink
+  secondary: "bg-[#C3E7E3]",   // mint
+  accent: "bg-[#F8E6C2]",      // cream
+  text: "text-[#3b3355]",
+  muted: "text-[#7b7399]",
+  chip: ["#FFC6D9", "#C3E7E3", "#F8E6C2", "#DCC4F3", "#BFE0FF", "#FAD4B8"],
+};
 
 export default function App() {
-  // ---------- 馬卡龍配色 ----------
-  const macaron = { bg:'bg-[#FFF6F6]', card:'bg-[#FDF2FA]', card2:'bg-[#F1F8FF]', card3:'bg-[#FDF7E3]', accent:'bg-[#FADADD]', accent2:'bg-[#C7E9B0]', text:'text-slate-700', title:'text-slate-800', border:'border-[#F3E8FF]', chip:'bg-white/70', danger:'text-rose-600' }
+  const [tab, setTab] = useState<TabKey>("student");
+  const [data, setData] = useState<Leaderboards | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-  // ---------- 工具 ----------
-  const safeNum = (v: unknown)=>{ const n=Number(String(v??'').replace(/[^\d.\-]/g,'')); return Number.isFinite(n)?n:0 }
-  const sortGrade = (a:string,b:string)=>{ const na=Number(a), nb=Number(b); if(Number.isFinite(na)&&Number.isFinite(nb)) return na-nb; return String(a).localeCompare(String(b),'zh-Hant') }
-  const parseClassName = (val: unknown)=>{ 
-    const s=String(val??'').trim(); 
-    if(!s) return {gradeText:'', classText:''}; 
-    const zh=s.match(/([一二三四五六])年級\s*(\d{1,2})\s*班/); 
-    if(zh) return {gradeText:`${zh[1]}年級`, classText:`${parseInt(zh[2],10)}班`}; 
-    const num=s.match(/^(\d)(\d{2})$/); 
-    if(num){ 
-      const digit=parseInt(num[1],10), cls=parseInt(num[2],10); 
-      const map=['零','一','二','三','四','五','六']; 
-      return {gradeText:`${map[digit]||digit}年級`, classText:`${cls}班`}; 
-    } 
-    const any=s.match(/(\d)(\d{1,2})/); 
-    if(any){ 
-      const digit=parseInt(any[1],10), cls=parseInt(any[2],10); 
-      const map=['零','一','二','三','四','五','六']; 
-      return {gradeText:`${map[digit]||digit}年級`, classText:`${cls}班`}; 
-    } 
-    const g=s.match(/([一二三四五六])年級/); 
-    const c=s.match(/(\d{1,2})\s*班/); 
-    return {gradeText:g?`${g[1]}年級`:'', classText:c?`${parseInt(c[1],10)}班`:s}; 
-  }
-
-  // ---------- Tab ----------
-  const [tab, setTab] = useState<'student'|'class'|'book'>('student')
-
-  // ---------- 欄位別名 ----------
-  const STUDENT_ALIASES = { name:['姓名','name','Name','學生姓名','学生姓名'], count:['借閱次數','借閱量','次數','count','Count','BorrowCount','借閱人次'], className:['班級名稱','班級代碼','班級','ClassName','class_name','班級名稱(代碼)'] }
-  const CLASS_ALIASES   = { className:['班級名稱','班級代碼','班級','ClassName','class_name','班級名稱(代碼)'], count:['借閱次數','借閱量','次數','count','Count','BorrowCount'] }
-  const BOOK_ALIASES    = { title:['書名','題名','書籍名稱','Title','BookTitle'], count:['借閱次數','借閱量','次數','count','Count','BorrowCount'] }
-
-  const pickHeader = (headers:string[], aliases:string[])=>{ const hs=headers.map(h=>String(h).trim()); for(const a of aliases){ const i=hs.findIndex(x=>x.toLowerCase()===a.toLowerCase()); if(i!==-1) return headers[i]; } for(const a of aliases){ const i=hs.findIndex(x=>x.toLowerCase().includes(a.toLowerCase())); if(i!==-1) return headers[i]; } return '' }
-  const requireHeaders = (headers:string[], aliasMap:Record<string,string[]>)=>{ const result:Record<string,string>={}; for(const k of Object.keys(aliasMap)){ const hit=pickHeader(headers, aliasMap[k]); if(!hit) return {ok:false as const, missing:k}; result[k]=hit; } return {ok:true as const, mapping:result} }
-  const readSheet = (file:File)=> new Promise<any[]>((resolve,reject)=>{ const r=new FileReader(); const isCSV=file.name.toLowerCase().endsWith('.csv'); r.onload=(e)=>{ try{ const data=(e.target as any)?.result; if(!data) return resolve([]); const wb=isCSV? XLSX.read(data,{type:'string'}) : XLSX.read(new Uint8Array(data as ArrayBuffer),{type:'array'}); const ws=wb.Sheets[wb.SheetNames[0]]; resolve(XLSX.utils.sheet_to_json(ws,{defval:''})); }catch(err){ reject(err);} }; if(isCSV) r.readAsText(file,'utf-8'); else r.readAsArrayBuffer(file); })
-
-  // ---------- 狀態 ----------
-  const [stuRows, setStuRows] = useState<StudentRow[]>([])
-  const [stuTopN,setStuTopN]=useState<number>(50)
-  const [stuErr,setStuErr]=useState<string>('')
-
-  const [clsRows, setClsRows] = useState<ClassRow[]>([])
-  const [clsTopN,setClsTopN]=useState<number>(50)
-  const [clsErr,setClsErr]=useState<string>('')
-
-  const [bookRows,setBookRows]=useState<BookRow[]>([])
-  const [bookTopN,setBookTopN]=useState<number>(100)
-  const [bookErr,setBookErr]=useState<string>('')
-
-  const [loadingCloud,setLoadingCloud]=useState<boolean>(false)
-  const [saving,setSaving]=useState<boolean>(false)
-  const [refreshing,setRefreshing]=useState<boolean>(false)
-
-  // ---------- 啟動：讀取雲端 JSON ----------
-  useEffect(()=>{ (async()=>{ try{ setLoadingCloud(true); const res=await fetch(BACKEND_URL); const json=await res.json(); const data=json?.data? json.data : json; if(data && data.student && data.class && data.book){ setStuRows(Array.isArray(data.student)? data.student:[]); setClsRows(Array.isArray(data.class)? data.class:[]); setBookRows(Array.isArray(data.book)? data.book:[]); } }catch(e){} finally{ setLoadingCloud(false);} })(); },[])
-
-  // ---------- 一鍵儲存到雲端（直接送 JSON） ----------
-  async function saveToCloud(){
-    const payload = { generatedAt:new Date().toISOString(), student:stuRows, class:clsRows, book:bookRows }
-    try{ setSaving(true); const res=await fetch(BACKEND_URL,{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)}); const json=await res.json(); if(json.ok){ alert('已儲存到雲端！'); } else { alert('儲存失敗：'+(json.error||'unknown')); } } catch(err){ alert('連線失敗，請稍後再試'); } finally{ setSaving(false); }
-  }
-
-  // ---------- 一鍵刷新：請 GAS 直接讀三份 Google Sheet、重建並覆寫 JSON ----------
-  async function refreshFromSheets(){
-    try{
-      setRefreshing(true)
-      const res = await fetch(BACKEND_URL + '?action=refresh', { method: 'POST' })
-      const json = await res.json()
-      if(!json.ok){ alert('刷新失敗：' + (json.error||'unknown')); return }
-      const r2 = await fetch(BACKEND_URL + '?' + Date.now())
-      const data = await r2.json()
-      const payload = data?.data ? data.data : data
-      if(payload && payload.student && payload.class && payload.book){
-        setStuRows(Array.isArray(payload.student)? payload.student:[])
-        setClsRows(Array.isArray(payload.class)? payload.class:[])
-        setBookRows(Array.isArray(payload.book)? payload.book:[])
-      }
-      alert('已從 Google 試算表刷新完成！')
-    }catch(err){
-      alert('連線失敗，請稍後再試')
-    }finally{
-      setRefreshing(false)
+  async function load() {
+    setLoading(true);
+    setErr(null);
+    try {
+      const d = await fetchLeaderboards();
+      setData(d);
+      if (!d) setErr("目前尚未建立排行榜，請先點『一鍵刷新』。");
+    } catch (e:any) {
+      setErr("讀取失敗，請稍後再試。");
+    } finally {
+      setLoading(false);
     }
   }
 
-  // ---------- 上傳 Excel → 本地生成 ----------
-  const handleStudentFile = async(file:File)=>{ setStuErr(''); const json=await readSheet(file); const headers=Object.keys(json?.[0]||{}); const check=requireHeaders(headers, STUDENT_ALIASES); if(!check.ok){ setStuErr(`學生表缺少必要欄位：${check.missing}`); setStuRows([]); return; } const {name,count,className}=check.mapping as any; const rows:StudentRow[]=json.map((r:any)=>{ const nm=String(r[name]??'').trim(); const cnt=safeNum(r[count]??0); const parsed=parseClassName(r[className]); return { grade:parsed.gradeText, clazz:parsed.classText, name:nm, count:cnt }; }).filter(r=>r.grade && r.name).sort((a,b)=>b.count-a.count); setStuRows(rows); }
-  const handleClassFile   = async(file:File)=>{ setClsErr(''); const json=await readSheet(file); const headers=Object.keys(json?.[0]||{}); const check=requireHeaders(headers, CLASS_ALIASES); if(!check.ok){ setClsErr(`班級表缺少必要欄位：${check.missing}`); setClsRows([]); return; } const {className,count}=check.mapping as any; const rows:ClassRow[]=json.map((r:any)=>{ const p=parseClassName(r[className]); return { grade:p.gradeText, clazz:p.classText, count:safeNum(r[count]??0) }; }).filter(r=>r.grade && r.clazz).sort((a,b)=>b.count-a.count); setClsRows(rows); }
-  const handleBookFile    = async(file:File)=>{ setBookErr(''); const json=await readSheet(file); const headers=Object.keys(json?.[0]||{}); const check=requireHeaders(headers, BOOK_ALIASES); if(!check.ok){ setBookErr(`書籍表缺少必要欄位：${check.missing}`); setBookRows([]); return; } const {title,count}=check.mapping as any; const rows:BookRow[]=json.map((r:any)=>({ title:String(r[title]??'').trim(), count:safeNum(r[count]??0) })).filter(r=>r.title).sort((a,b)=>b.count-a.count); setBookRows(rows); }
+  useEffect(() => { load(); }, []);
 
-  // ---------- 衍生資料 ----------
-  const stuByGrade = useMemo(()=>{ const map=new Map<string,StudentRow[]>(); for(const r of stuRows){ if(!map.has(r.grade)) map.set(r.grade,[]); map.get(r.grade)!.push(r)} for(const [g,arr] of map) arr.sort((a,b)=>b.count-a.count); return map },[stuRows])
-  const stuGrades   = useMemo(()=> Array.from(stuByGrade.keys()).sort(sortGrade), [stuByGrade])
-  const stuSchoolTop= useMemo(()=> stuRows.slice(0,stuTopN), [stuRows,stuTopN])
-  const clsSchoolTop= useMemo(()=> clsRows.slice(0,clsTopN), [clsRows,clsTopN])
-  const bookSchoolTop=useMemo(()=> bookRows.slice(0,bookTopN), [bookRows,bookTopN])
-
-  // ---------- UI 小元件 ----------
-  const UploadInline: React.FC<{label:string; onFile:(f:File)=>void}> = ({ label, onFile }) => (
-    <div className={`rounded-2xl ${macaron.card2} p-5 border ${macaron.border} shadow-sm`}>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className={`text-base md:text-lg font-semibold ${macaron.title}`}>{label}</h2>
-        <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white shadow-sm hover:shadow transition">
-          <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(e)=>{ const f=e.target.files?.[0]; if(f) onFile(f) }} />
-          <span className="font-medium">選擇檔案</span>
-        </label>
-      </div>
-    </div>
-  )
-
-  const Table: React.FC<{columns:{key:string;label:string;render?:(v:any,row:any,i:number)=>React.ReactNode}[]; rows:any[]; title:string; limit?:number; rightAlignKeys?:string[]}> = ({ columns, rows, title, limit, rightAlignKeys=[] }) => (
-    <div className={`rounded-2xl ${macaron.card} shadow-sm border ${macaron.border} p-4 md:p-6`}>
-      <div className="flex items-center justify-between mb-3">
-        <h3 className={`font-semibold text-lg md:text-xl ${macaron.title}`}>{title}</h3>
-        {typeof limit==='number' && (<span className={`text-xs md:text-sm px-2 py-1 rounded-full ${macaron.chip} ${macaron.text}`}>Top {limit}</span>)}
-      </div>
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
-          <thead><tr className="border-b border-white/60">{columns.map(c=>(<th key={c.key} className={`text-left py-2 pr-2 ${rightAlignKeys.includes(c.key)?'text-right':''}`}>{c.label}</th>))}</tr></thead>
-          <tbody>{rows.map((r,idx)=>(<tr key={idx} className="border-b border-white/40 last:border-none">{columns.map(c=>(<td key={c.key} className={`py-2 pr-2 ${rightAlignKeys.includes(c.key)?'text-right':''}`}>{c.render? c.render((r as any)[c.key], r, idx) : (r as any)[c.key]}</td>))}</tr>))}</tbody>
-        </table>
-      </div>
-    </div>
-  )
-
-  // ---------- 分頁 ----------
-  const StudentPage = () => (
-    <div className="space-y-6">
-      <UploadInline label="上傳【學生借閱】檔案（姓名／借閱次數／班級名稱）" onFile={handleStudentFile} />
-      {stuErr && <p className={`${macaron.danger}`}>{stuErr}</p>}
-      {stuRows.length>0 && (<>
-        <div className={`rounded-2xl ${macaron.card} p-5 border ${macaron.border} shadow-sm flex flex-wrap items-center gap-4`}>
-          <div className="flex items-center gap-2"><label className="text-sm">全校 Top N：</label><input type="number" min={1} max={9999} value={stuTopN} onChange={(e)=>setStuTopN(Math.max(1,Math.min(9999,Number(e.target.value)||1)))} className="w-24 rounded-xl border border-white bg-white px-3 py-2"/></div>
-          <div className="text-xs text-slate-500">資料列數：{stuRows.length}</div>
-        </div>
-        <Table title={`全校學生借閱排行榜（Top ${stuTopN}）`} limit={stuTopN} columns={[{key:'rank',label:'名次',render:(_,__,i)=>i+1},{key:'name',label:'姓名'},{key:'grade',label:'年級'},{key:'clazz',label:'班級'},{key:'count',label:'借閱次數'}]} rows={stuSchoolTop} rightAlignKeys={["count"]}/>
-        <div className="mt-6">
-          <h2 className={`text-xl font-bold ${macaron.title} mb-3`}>各年級前 10 名</h2>
-          <div className="flex flex-wrap gap-2 mb-4">{stuGrades.map(g=>(<span key={g} className={`px-3 py-1 rounded-full ${macaron.accent2} ${macaron.text} shadow-sm`}>年級：{g}</span>))}</div>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {stuGrades.map((g)=> (<Table key={g} title={`【${g}年級】借閱前十名`} limit={10} columns={[{key:'rank',label:'名次',render:(_,__,i)=>i+1},{key:'name',label:'姓名'},{key:'clazz',label:'班級'},{key:'count',label:'借閱次數'}]} rows={(stuByGrade.get(g)||[]).slice(0,10)} rightAlignKeys={["count"]}/>))}
-          </div>
-        </div>
-      </>)}
-    </div>
-  )
-
-  const ClassPage = () => (
-    <div className="space-y-6">
-      <UploadInline label="上傳【班級借閱】檔案（班級名稱／借閱次數）" onFile={handleClassFile} />
-      {clsErr && <p className={`${macaron.danger}`}>{clsErr}</p>}
-      {clsRows.length>0 && (<>
-        <div className={`rounded-2xl ${macaron.card} p-5 border ${macaron.border} shadow-sm flex flex-wrap items-center gap-4`}>
-          <div className="flex items-center gap-2"><label className="text-sm">全校 Top N：</label><input type="number" min={1} max={9999} value={clsTopN} onChange={(e)=>setClsTopN(Math.max(1,Math.min(9999,Number(e.target.value)||1)))} className="w-24 rounded-xl border border-white bg-white px-3 py-2"/></div>
-          <div className="text-xs text-slate-500">班級數：{clsRows.length}</div>
-        </div>
-        <Table title={`全校班級借閱排行榜（Top ${clsTopN}）`} limit={clsTopN} columns={[{key:'rank',label:'名次',render:(_,__,i)=>i+1},{key:'clazz',label:'班級'},{key:'grade',label:'年級'},{key:'count',label:'借閱次數'}]} rows={clsSchoolTop} rightAlignKeys={["count"]}/>
-      </>)}
-    </div>
-  )
-
-  const BookPage = () => (
-    <div className="space-y-6">
-      <UploadInline label="上傳【書籍借閱】檔案（書名／借閱次數）" onFile={handleBookFile} />
-      {bookErr && <p className={`${macaron.danger}`}>{bookErr}</p>}
-      {bookRows.length>0 && (<>
-        <div className={`rounded-2xl ${macaron.card} p-5 border ${macaron.border} shadow-sm flex flex-wrap items-center gap-4`}>
-          <div className="flex items-center gap-2"><label className="text-sm">全校 Top N：</label><input type="number" min={1} max={9999} value={bookTopN} onChange={(e)=>setBookTopN(Math.max(1,Math.min(9999,Number(e.target.value)||1)))} className="w-24 rounded-xl border border-white bg-white px-3 py-2"/></div>
-          <div className="text-xs text-slate-500">書目數：{bookRows.length}</div>
-        </div>
-        <Table title={`全校書籍借閱排行榜（Top ${bookTopN}）`} limit={bookTopN} columns={[{key:'rank',label:'名次',render:(_,__,i)=>i+1},{key:'title',label:'書名'},{key:'count',label:'借閱次數'}]} rows={bookSchoolTop} rightAlignKeys={["count"]}/>
-      </>)}
-    </div>
-  )
+  async function doRefresh() {
+    setRefreshing(true);
+    setErr(null);
+    try {
+      const ok = await refreshLeaderboards();
+      if (!ok) throw new Error("refresh failed");
+      await load();
+    } catch {
+      setErr("重新整理失敗，請檢查後端權限或稍後再試。");
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   return (
-    <div className={`min-h-screen ${macaron.bg} ${macaron.text} p-4 md:p-8`}>
-      <div className="mx-auto max-w-7xl space-y-6">
-        <header className={`rounded-2xl ${macaron.card3} p-5 md:p-8 border ${macaron.border} shadow-sm`}>
-          <h1 className={`text-2xl md:text-3xl font-extrabold ${macaron.title}`}>📚 快樂國小｜閱讀排行榜（GAS 雲端保存＋一鍵刷新）</h1>
-          <p className={`${macaron.text} mt-2`}>可直接上傳 Excel 產生榜單、儲存到雲端，或按「一鍵刷新」從 Google 試算表重建。</p>
-        </header>
-
-        <div className={`rounded-2xl ${macaron.card3} p-4 border ${macaron.border} shadow-sm flex flex-wrap items-center gap-3`}>
-          <button onClick={saveToCloud} disabled={saving} className="px-4 py-2 rounded-xl bg-white shadow hover:shadow-md disabled:opacity-60">{saving? '儲存中…' : '儲存到雲端'}</button>
-          <button onClick={refreshFromSheets} disabled={refreshing} className="px-4 py-2 rounded-xl bg-white shadow hover:shadow-md disabled:opacity-60">{refreshing? '刷新中（抓取試算表）…' : '一鍵刷新（讀取試算表）'}</button>
+    <div className={`${pastel.bg} min-h-screen`}>
+      <header className="max-w-6xl mx-auto p-6">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h1 className={`text-2xl md:text-3xl font-bold ${pastel.text}`}>快樂國小｜閱讀排行榜</h1>
+            <p className={`${pastel.muted} text-sm mt-1`}>學生 / 班級 / 書籍　三大榜單（按 GAS 一鍵刷新）</p>
+          </div>
+          <button
+            onClick={doRefresh}
+            disabled={refreshing}
+            className={`px-4 py-2 rounded-2xl shadow border ${pastel.border} ${pastel.primary} hover:opacity-90 disabled:opacity-60`}
+            title="讀取三份 Google 試算表，重建並覆寫 leaderboards.json"
+          >
+            {refreshing ? "刷新中..." : "一鍵刷新"}
+          </button>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          {['student','class','book'].map((id)=> (
-            <button key={id} onClick={()=>setTab(id as any)} className={`px-4 py-2 rounded-full shadow-sm border ${macaron.border} ${tab===id? macaron.accent : 'bg-white'}`}>
-              {id==='student'?'學生借閱': id==='class'?'班級借閱':'書籍借閱'}
+        <nav className="mt-6 flex gap-2">
+          {([
+            ["student","學生借閱"] as const,
+            ["class","班級借閱"] as const,
+            ["book","書籍借閱"] as const,
+          ]).map(([k,label],i)=>(
+            <button
+              key={k}
+              onClick={()=>setTab(k as TabKey)}
+              className={`px-4 py-2 rounded-2xl border ${pastel.border} ${tab===k ? "bg-white" : "bg-white/70 hover:bg-white"} shadow-sm`}
+              aria-pressed={tab===k}
+            >
+              <span className={`${pastel.text} font-medium`}>{label}</span>
             </button>
           ))}
-        </div>
+        </nav>
+      </header>
 
-        {tab==='student' && <StudentPage/>}
-        {tab==='class' && <ClassPage/>}
-        {tab==='book' && <BookPage/>}
+      <main className="max-w-6xl mx-auto p-6 pt-2">
+        <section className={`rounded-3xl border ${pastel.border} ${pastel.card} p-4 md:p-6 shadow`}>
+          {loading ? (
+            <div className="animate-pulse text-center py-12">載入中...</div>
+          ) : err ? (
+            <div className="text-center py-8">
+              <p className="text-red-600 font-medium">{err}</p>
+              <div className="mt-4">
+                <button onClick={load} className="px-4 py-2 rounded-2xl border bg-white hover:bg-white/80">重新載入</button>
+              </div>
+            </div>
+          ) : !data ? (
+            <div className="text-center py-8">目前尚無資料，請點上方「一鍵刷新」。</div>
+          ) : (
+            <>
+              {tab==="student" && <StudentTab data={data} />}
+              {tab==="class"   && <ClassTab data={data} />}
+              {tab==="book"    && <BookTab data={data} />}
+              <footer className="pt-4 text-xs text-right text-gray-500">
+                產生時間：{new Date(data.generatedAt).toLocaleString()}
+              </footer>
+            </>
+          )}
+        </section>
+      </main>
+    </div>
+  );
+}
 
-        <footer className="pt-6 text-xs text-center text-slate-500"><p>© {new Date().getFullYear()} 快樂國小｜閱讀推動</p></footer>
+/* ---------- 子元件 ---------- */
+
+function Chip({text, i}:{text:string; i:number}) {
+  const color = pastel.chip[i % pastel.chip.length];
+  return (
+    <span
+      className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium mr-2"
+      style={{ backgroundColor: color, color: "#3b3355" }}
+    >
+      {text}
+    </span>
+  );
+}
+
+function RankTable({
+  headers, rows, getKey
+}:{
+  headers: string[];
+  rows: React.ReactNode[][];
+  getKey: (i:number)=>string;
+}) {
+  return (
+    <div className="overflow-x-auto rounded-2xl border mt-2" style={{borderColor: "#EFD9E0"}}>
+      <table className="min-w-full text-sm">
+        <thead className="bg-white/90">
+          <tr>
+            {headers.map((h,idx)=>(
+              <th key={idx} className="px-3 py-2 text-left font-semibold text-[#3b3355]">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y" style={{borderColor: "#F3E6EA"}}>
+          {rows.map((cols,i)=>(
+            <tr key={getKey(i)} className="hover:bg-white/70">
+              {cols.map((c,ci)=>(
+                <td key={ci} className="px-3 py-2">{c}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/* --- Student tab --- */
+function StudentTab({data}:{data:Leaderboards}) {
+  const overall = data.studentOverall;
+  // 依年級群組，取各年級前10名（後端已有，但前端也做一次保險）
+  const byGrade = useMemo(() => {
+    const m = new Map<number, Student[]>();
+    for (const s of overall) {
+      if (!m.has(s.gradeNo)) m.set(s.gradeNo, []);
+      m.get(s.gradeNo)!.push(s);
+    }
+    for (const [g, arr] of m) arr.sort((a,b)=>b.count-a.count);
+    return m;
+  }, [overall]);
+
+  return (
+    <div>
+      <h2 className="text-xl font-bold text-[#3b3355]">全校學生排行榜</h2>
+      <RankTable
+        headers={["名次","年級","班級","姓名","借閱次數"]}
+        rows={overall.map((s,idx)=>[
+          <b key="rank">#{idx+1}</b>,
+          <span key="g"><Chip text={s.grade} i={s.gradeNo}/></span>,
+          <span key="c">{s.clazz}</span>,
+          <span key="n" className="font-medium">{s.name}</span>,
+          <span key="ct">{s.count}</span>
+        ])}
+        getKey={(i)=>`stu-${i}`}
+      />
+
+      <h3 className="text-lg font-semibold text-[#3b3355] mt-6">各年級前十名</h3>
+      <div className="grid md:grid-cols-2 gap-4 mt-2">
+        {Array.from({length:6},(_,i)=>i+1).map(gradeNo=>{
+          const list = (data.studentTopByGrade?.[gradeNo] ?? byGrade.get(gradeNo) ?? []).slice(0,10);
+          return (
+            <div key={gradeNo} className="p-4 rounded-2xl border" style={{borderColor:"#EFD9E0"}}>
+              <div className="flex items-center justify-between">
+                <div className="font-bold text-[#3b3355]">{["","一","二","三","四","五","六"][gradeNo]}年級</div>
+                <div className={`px-2 py-1 rounded-xl text-xs ${pastel.secondary}`}>Top 10</div>
+              </div>
+              <ol className="mt-2 space-y-1">
+                {list.map((s,idx)=>(
+                  <li key={idx} className="flex justify-between text-sm">
+                    <span className="truncate">
+                      <b className="mr-2">#{idx+1}</b>
+                      <span className="mr-2">{s.clazz}</span>
+                      <span className="font-medium">{s.name}</span>
+                    </span>
+                    <span className="tabular-nums">{s.count}</span>
+                  </li>
+                ))}
+                {list.length===0 && <div className="text-sm text-gray-500">無資料</div>}
+              </ol>
+            </div>
+          );
+        })}
       </div>
     </div>
-  )
+  );
+}
+
+/* --- Class tab --- */
+function ClassTab({data}:{data:Leaderboards}) {
+  const rows = data.classTop;
+  return (
+    <div>
+      <h2 className="text-xl font-bold text-[#3b3355]">班級借閱排行榜</h2>
+      <RankTable
+        headers={["名次","年級","班級","借閱次數"]}
+        rows={rows.map((c,idx)=>[
+          <b key="rank">#{idx+1}</b>,
+          <span key="g"><Chip text={c.grade} i={c.gradeNo} /></span>,
+          <span key="c">{c.className}</span>,
+          <span key="ct" className="tabular-nums">{c.count}</span>,
+        ])}
+        getKey={(i)=>`cls-${i}`}
+      />
+    </div>
+  );
+}
+
+/* --- Book tab --- */
+function BookTab({data}:{data:Leaderboards}) {
+  const rows = data.bookTop;
+  return (
+    <div>
+      <h2 className="text-xl font-bold text-[#3b3355]">書籍借閱排行榜</h2>
+      <RankTable
+        headers={["名次","書名","借閱次數"]}
+        rows={rows.map((b,idx)=>[
+          <b key="rank">#{idx+1}</b>,
+          <span key="t" className="font-medium">{b.title}</span>,
+          <span key="ct" className="tabular-nums">{b.count}</span>,
+        ])}
+        getKey={(i)=>`book-${i}`}
+      />
+    </div>
+  );
 }
