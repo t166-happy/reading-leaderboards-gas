@@ -30,3 +30,4 @@ npm run preview
 5. 部署後在 Google Sites 嵌入
 - 先把打包產生的 `dist/` 發佈成靜態網站（GitHub Pages / Netlify / Vercel）
 - 在 Google 協作平台（Sites）**嵌入 → 網址** 貼上你的網站網址即可
+# all rights reserved by james su.
