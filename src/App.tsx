@@ -59,8 +59,8 @@ export default function App() {
       <header className="max-w-6xl mx-auto p-6">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h1 className={`text-2xl md:text-3xl font-bold ${pastel.text}`}>快樂國小｜閱讀排行榜</h1>
-            <p className={`${pastel.muted} text-sm mt-1`}>學生 / 班級 / 書籍　三大榜單（按 GAS 一鍵刷新）</p>
+            <h1 className={`text-2xl md:text-3xl font-bold ${pastel.text}`}>快樂國小｜閱讀小博士排行榜</h1>
+            <p className={`${pastel.muted} text-sm mt-1`}>學生 / 班級 / 書籍　三大榜單（按 一鍵刷新）</p>
           </div>
           <button
             onClick={doRefresh}
