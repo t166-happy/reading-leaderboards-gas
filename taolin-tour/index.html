@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>桃林鐵道 AI 走讀任務</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-content">
+      <p class="eyebrow">快樂國小 AI Tour 站</p>
+      <h1>桃林鐵道 AI 走讀任務</h1>
+      <p>先看影片與老照片，再到三個站點拍照、觀察、記錄一句話發現。</p>
+      <a class="primary-button" href="#submit-section">開始上傳走讀紀錄</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>一、走讀前先看看</h2>
+      <p>請先閱讀介紹、觀看影片，再前往站點。</p>
+      <div class="resource-grid">
+        <a class="resource-card" href="https://travel.tycg.gov.tw/zh-tw/travel/attraction/2180" target="_blank" rel="noopener"><h3>桃園觀光導覽網｜桃林鐵路</h3><p>認識桃林鐵道的歷史、運煤用途與鐵馬道轉型。</p></a>
+        <a class="resource-card" href="https://www.facebook.com/share/v/14bQWzbSu83/?mibextid=wwXIfr" target="_blank" rel="noopener"><h3>桃園市都發局影片</h3><p>觀看桃林鐵道與城市發展的介紹。</p></a>
+        <a class="resource-card" href="https://www.facebook.com/share/v/1XMAXKxKx2/?mibextid=wwXIfr" target="_blank" rel="noopener"><h3>早期桃林鐵道歷史影像</h3><p>看看以前鐵道、列車與周邊環境的樣貌。</p></a>
+        <a class="resource-card" href="https://memory.culture.tw" target="_blank" rel="noopener"><h3>國家文化記憶庫</h3><p>搜尋「桃林鐵路、林口線、運煤列車」找老照片。</p></a>
+        <a class="resource-card" href="https://www.youtube.com/results?search_query=%E6%9E%97%E5%8F%A3%E7%B7%9A+%E9%81%8B%E7%85%A4%E5%88%97%E8%BB%8A" target="_blank" rel="noopener"><h3>YouTube｜林口線運煤列車</h3><p>觀看早期運煤列車與火車頭紀錄。</p></a>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>二、選擇走讀站點</h2>
+      <div class="station-grid">
+        <article class="station-card"><span class="station-badge">A 站</span><h3>運煤柴電機火車頭藝術造景</h3><p>觀察紅白色火車頭、舊鐵軌、木棧道與鐵道轉型。</p><strong>提問：</strong><p>以前這裡是鐵道，現在變成步道，你覺得最大的改變是什麼？</p></article>
+        <article class="station-card"><span class="station-badge">B 站</span><h3>煉油廠煙囪、廠房與儲油罐</h3><p>從安全距離觀察工業地景，思考能源與環境永續。</p><strong>提問：</strong><p>我們生活需要能源，但也要保護環境，你覺得可以怎麼做？</p></article>
+        <article class="station-card"><span class="station-badge">C 站</span><h3>南昌公園風雨球場</h3><p>觀察公園綠地、風雨球場與社區健康生活空間。</p><strong>提問：</strong><p>公園對居民和環境有什麼幫助？</p></article>
+      </div>
+    </section>
+
+    <section id="submit-section" class="card">
+      <h2>三、上傳你的走讀紀錄</h2>
+      <p>請填寫資料、選擇站點、上傳照片，並用一句話記錄你的發現。</p>
+      <form id="tourForm">
+        <div class="form-row">
+          <label>班級<input type="text" id="className" placeholder="例如：五年一班" required /></label>
+          <label>座號<input type="number" id="seatNumber" min="1" max="99" placeholder="例如：12" required /></label>
+        </div>
+        <label>姓名<input type="text" id="studentName" placeholder="請輸入姓名" required /></label>
+        <label>走讀站點<select id="station" required><option value="">請選擇站點</option><option value="A站：運煤柴電機火車頭藝術造景">A站：運煤柴電機火車頭藝術造景</option><option value="B站：煉油廠煙囪、廠房與儲油罐">B站：煉油廠煙囪、廠房與儲油罐</option><option value="C站：南昌公園風雨球場">C站：南昌公園風雨球場</option></select></label>
+        <label>現場照片<input type="file" id="photo" accept="image/*" capture="environment" required /></label>
+        <label>一句話記錄你的發現<textarea id="reflection" rows="4" maxlength="120" placeholder="例如：我發現舊鐵道變成可以散步的綠色步道。" required></textarea></label>
+        <label class="checkbox-label"><input type="checkbox" id="consent" required />我確認這是我的走讀學習紀錄，照片內容適合學校作業使用。</label>
+        <button type="submit" id="submitButton">送出走讀紀錄</button>
+        <p id="statusMessage" class="status"></p>
+      </form>
+    </section>
+  </main>
+  <footer><p>快樂國小｜桃林鐵道 AI Tour 走讀任務</p></footer>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
